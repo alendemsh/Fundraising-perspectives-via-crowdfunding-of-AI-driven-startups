@@ -5,11 +5,15 @@ library(fixest)
 library(modelsummary)
 library(marginaleffects)
 library(plm)
-library(pandoc) #для конвертации табличек в отдельные файлы
-library(ggplot2) #для графиков
+library(pandoc) 
+library(ggplot2) 
 library(reshape2)
 library(car)
 library(patchwork)
+library(dplyr)
+library(lubridate)
+library(quantreg)
+set.seed(123)
 
 ## Formatting ==================================================================
 options(scipen = 999)
@@ -212,7 +216,36 @@ modelsummary(
 )
 
 ## Graphs ======================================================================
-#interaction plot (AI × GII)
+### Two-way Interractions graph in Excel ---------------------------------------
+b <- coef(m3_ols)
+
+b["log_ai_keyword_count_c"]        
+b["gii_c"]                         
+b["log_ai_keyword_count_c:gii_c"] 
+b["(Intercept)"]                   
+
+mean(data$log_ai_keyword_count_c, na.rm = TRUE)  
+sd(data$log_ai_keyword_count_c, na.rm = TRUE)    
+
+mean(data$gii_c, na.rm = TRUE)                   
+sd(data$gii_c, na.rm = TRUE)                     
+
+V <- vcov(m3_ols, vcov = "hetero")
+#  variance of coefficient of IV
+V["log_ai_keyword_count_c",
+  "log_ai_keyword_count_c"]
+
+#  variance of interaction coefficient
+V["log_ai_keyword_count_c:gii_c",
+  "log_ai_keyword_count_c:gii_c"]
+
+#  covariance IV coefficient and interaction
+V["log_ai_keyword_count_c",
+  "log_ai_keyword_count_c:gii_c"]
+
+nobs(m3_ols)
+
+### interaction plot (AI × GII) ------------------------------------------------
 p <- plot_predictions(
   m3_ols,
   condition = c("log_ai_keyword_count_c", "gii_c")
@@ -221,12 +254,13 @@ p <- plot_predictions(
 p +
   labs(
     x = "AI keywords (log, centered)",
-    y = "Predicted funding success",
+    y = "Predicted log funding ratio",
     color = "Deviation from mean GII"
   ) +
   guides(fill = "none")
 
-#Predicted vs Actual
+
+### Predicted vs Actual --------------------------------------------------------
 par(mfrow = c(1,1))
 data$pred <- predict(m3_ols)
 
@@ -241,7 +275,7 @@ plot(
 
 abline(0, 1)
 
-#VIF
+## VIF =========================================================================
 vif_table <- bind_rows(
   enframe(vif_m1, name = "Variable", value = "VIF") %>%
     mutate(Model = "Model 1"),
@@ -253,7 +287,135 @@ vif_table <- bind_rows(
     mutate(Model = "Model 3"),
 )
 
-# Сохраняем CSV
+# CSV
 write.csv(vif_table,
           "vif_table.csv",
           row.names = FALSE)
+
+## 2021-2022 vs 2023-2026  =====================================================
+data <- data %>%
+  mutate(
+    launched_at = ymd_hms(launched_at),
+    year = year(launched_at)
+  )
+
+df_2021_2023 <- data %>%
+  filter(year >= 2021 & year <= 2023)
+
+df_2024_2026 <- data %>%
+  filter(year >= 2024 & year <= 2026)
+
+### 2021-2023 ------------------------------------------------------------------
+m3_ols_23 <- feols(
+  log_funding_ratio ~ duration_days + title_length_chars + has_video 
+  + log_story_image_count + creator_competence_count 
+  + story_external_links_count +
+    has_faq_section +
+    log_ai_keyword_count_c*gii_c +
+    creator_created_projects,
+  data = df_2021_2023,
+  vcov = "hetero"
+)
+
+### 2024-2026 ------------------------------------------------------------------
+m3_ols_26 <- feols(
+  log_funding_ratio ~ duration_days + title_length_chars + has_video 
+  + log_story_image_count + creator_competence_count 
+  + story_external_links_count +
+    has_faq_section +
+    log_ai_keyword_count_c*gii_c +
+    creator_created_projects,
+  data = df_2024_2026,
+  vcov = "hetero"
+)
+
+### comparison -----------------------------------------------------------------
+
+modelsummary(
+  list(
+    "OLS with interraction: 2021 - 2023" = m3_ols_23,
+    "OLS with interraction: 2024 - 2026" = m3_ols_26
+  ),
+  stars = TRUE,
+  statistic = "({std.error})",
+  gof_omit = "IC|Log|Adj|Pseudo" 
+  #,
+  #output = "ols_regression_years.docx"
+)
+
+### Quantile regression ========================================================
+model_quantiles <- rq(
+  log_funding_ratio ~ duration_days + title_length_chars + has_video 
+  + log_story_image_count + creator_competence_count 
+  + story_external_links_count +
+    has_faq_section +
+    log_ai_keyword_count_c*gii_c +
+    creator_created_projects,
+  tau = c(0.10, 0.25, 0.50, 0.75, 0.90),
+  data = data
+)
+
+# 0.10 - Проекты с очень низким условным log_funding_ratio
+# 0.25 - Нижняя часть распределения  
+# 0.50 - Медианный уровень                                   
+# 0.75 - Верхняя часть распределения                        
+# 0.90 - Проекты с очень высоким log_funding_ratio
+
+quantile_results <- summary(
+  model_quantiles,
+  se = "boot",
+  R = 1000
+)
+
+quantile_results
+plot(quantile_results)
+
+### Проверка различия коэф-тов в 50 и 75 квантилях (H0: коэф-ты одинаковые) ----
+model_q50 <- rq(
+  log_funding_ratio ~ duration_days + title_length_chars + has_video 
+  + log_story_image_count + creator_competence_count 
+  + story_external_links_count +
+    has_faq_section +
+    log_ai_keyword_count_c*gii_c +
+    creator_created_projects,
+  tau = 0.5,
+  data = data
+)
+
+model_q75 <- rq(
+  log_funding_ratio ~ duration_days + title_length_chars + has_video 
+  + log_story_image_count + creator_competence_count 
+  + story_external_links_count +
+    has_faq_section +
+    log_ai_keyword_count_c*gii_c +
+    creator_created_projects,
+  tau = 0.75,
+  data = data
+)
+
+anova(model_q50, model_q75, joint = FALSE)
+# p-value > 0.05, коэффициент взаимодействия статистически не различается между медианой и 75-м квантилем.
+
+### Вывод в таблицы ------------------------------------------------------------
+model_q10 <- update(model_quantiles, tau = 0.10)
+model_q25 <- update(model_quantiles, tau = 0.25)
+model_q50 <- update(model_quantiles, tau = 0.50)
+model_q75 <- update(model_quantiles, tau = 0.75)
+model_q90 <- update(model_quantiles, tau = 0.90)
+
+modelsummary(
+  list(
+    "10th percentile" =  model_q10,
+    "25th percentile" = model_q25,
+    "Median" =  model_q50,
+    "75th percentile" = model_q75,
+    "90th percentile" = model_q90
+  ),
+  stars = TRUE,
+  statistic = "({std.error})",
+  gof_map = "nobs",
+  title = "Quantile Regression Results",
+  notes = "Bootstrap standard errors based on 1,000 replications are reported in parentheses."
+  #,
+  #output = "Quantile_Regression_Results.docx"
+)
