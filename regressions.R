@@ -292,11 +292,11 @@ write.csv(vif_table,
           "vif_table.csv",
           row.names = FALSE)
 
-## 2021-2022 vs 2023-2026  =====================================================
+## 2021-2023 vs 2024-2026  =====================================================
 data <- data %>%
   mutate(
-    launched_at = ymd_hms(launched_at),
-    year = year(launched_at)
+    launched_at = ymd_hms(deadline),
+    year = year(deadline)
   )
 
 df_2021_2023 <- data %>%
@@ -355,11 +355,11 @@ model_quantiles <- rq(
   data = data
 )
 
-# 0.10 - Проекты с очень низким условным log_funding_ratio
-# 0.25 - Нижняя часть распределения  
-# 0.50 - Медианный уровень                                   
-# 0.75 - Верхняя часть распределения                        
-# 0.90 - Проекты с очень высоким log_funding_ratio
+# 0.10 - Projects with very low log_funding_ratio
+# 0.25 - The lower part of the distribution 
+# 0.50 - The median level                                   
+# 0.75 - The upper part of the distribution                         
+# 0.90 - Projects with very high log_funding_ratio
 
 quantile_results <- summary(
   model_quantiles,
@@ -370,7 +370,7 @@ quantile_results <- summary(
 quantile_results
 plot(quantile_results)
 
-### Проверка различия коэф-тов в 50 и 75 квантилях (H0: коэф-ты одинаковые) ----
+###Checking the difference in coefficients in 50 and 75 quantiles (H0: the coefficients are the same)----
 model_q50 <- rq(
   log_funding_ratio ~ duration_days + title_length_chars + has_video 
   + log_story_image_count + creator_competence_count 
@@ -394,9 +394,9 @@ model_q75 <- rq(
 )
 
 anova(model_q50, model_q75, joint = FALSE)
-# p-value > 0.05, коэффициент взаимодействия статистически не различается между медианой и 75-м квантилем.
+# p-value > 0.05, The interaction coefficient does not statistically differ between the median and the 75th quantile.
 
-### Вывод в таблицы ------------------------------------------------------------
+### Output to tables ------------------------------------------------------------
 model_q10 <- update(model_quantiles, tau = 0.10)
 model_q25 <- update(model_quantiles, tau = 0.25)
 model_q50 <- update(model_quantiles, tau = 0.50)
